@@ -16,11 +16,13 @@ class Game {
         this.battleLog = [];
         this.draggedUnit = null;
         this.dragSource = null;
+        this.playerUnitsInBattle = []; // Track all player units that entered battle
         
         this.initializeArena();
         this.initializeShop();
         this.generateEnemyTeam();
         this.bindEvents();
+        this.bindShopSellEvents();
         this.updateUI();
     }
     
@@ -147,13 +149,17 @@ class Game {
             // Remove the 3 units from their current locations
             unitsToCombine.forEach(unit => this.removeUnitFromAllLocations(unit));
             
-            // Place the upgraded unit in the first available bench slot
-            const emptyBenchSlot = this.playerBench.findIndex(slot => slot === null);
-            if (emptyBenchSlot !== -1) {
-                this.playerBench[emptyBenchSlot] = upgradedUnit;
-            }
-            
-            this.addToLog(`Combined 3 ${baseUnit.type}s into a Tier ${upgradedUnit.tier} ${upgradedUnit.type}!`, 'victory');
+                         // Place the upgraded unit in the first available bench slot
+             const emptyBenchSlot = this.playerBench.findIndex(slot => slot === null);
+             if (emptyBenchSlot !== -1) {
+                 this.playerBench[emptyBenchSlot] = upgradedUnit;
+             }
+             
+             this.addToLog(`Combined 3 ${baseUnit.type}s into a Tier ${upgradedUnit.tier} ${upgradedUnit.type}!`, 'victory');
+             
+             // Re-render after combining
+             this.renderBench();
+             this.renderArena();
         }
     }
     
@@ -212,6 +218,7 @@ class Game {
         // Place in arena
         this.arena[row][col] = unit;
         
+        // Check for combinations after moving unit
         this.checkForCombinableUnits();
         this.updateUI();
         this.renderArena();
@@ -269,11 +276,15 @@ class Game {
         this.updateUI();
         this.addToLog('Battle begins!');
         
-        // Ensure all units start with full health for this battle
+        // Track all player units that entered this battle
+        this.playerUnitsInBattle = [];
         for (let row = 0; row < this.arenaHeight; row++) {
             for (let col = 0; col < this.arenaWidth; col++) {
                 const unit = this.arena[row][col];
                 if (unit) {
+                    if (!unit.isEnemy) {
+                        this.playerUnitsInBattle.push(unit);
+                    }
                     unit.health = unit.maxHealth;
                     unit.abilityCooldown = 0;
                     unit.hasMoved = false;
@@ -608,19 +619,19 @@ class Game {
         this.phase = 'preparation';
         this.gold += 1;
         
-        // Collect ALL player units and reset their health (even if they died)
-        const playerUnits = [];
+        // Use the tracked player units from the battle (includes those that died)
+        const playerUnits = this.playerUnitsInBattle || [];
+        
+        // Reset their health and status (resurrect dead units)
+        playerUnits.forEach(unit => {
+            unit.health = unit.maxHealth;
+            unit.abilityCooldown = 0;
+            unit.hasMoved = false;
+        });
+        
+        // Clear the entire arena
         for (let row = 0; row < this.arenaHeight; row++) {
             for (let col = 0; col < this.arenaWidth; col++) {
-                const unit = this.arena[row][col];
-                if (unit && !unit.isEnemy) {
-                    // Reset unit to full health and clear status effects
-                    unit.health = unit.maxHealth;
-                    unit.abilityCooldown = 0;
-                    unit.hasMoved = false;
-                    playerUnits.push(unit);
-                }
-                // Clear the arena slot
                 this.arena[row][col] = null;
             }
         }
@@ -632,6 +643,9 @@ class Game {
                 this.playerBench[emptyBenchSlot] = unit;
             }
         });
+        
+        // Check for combinations after units return to bench
+        this.checkForCombinableUnits();
         
         this.generateEnemyTeam();
         this.initializeShop();
@@ -830,6 +844,9 @@ class Game {
             // Move to empty slot
             this.moveUnitToArena(this.draggedUnit, row, col);
         }
+        
+        // Check for combinations after any unit movement
+        this.checkForCombinableUnits();
     }
     
     handleArenaSlotClick(row, col) {
@@ -875,15 +892,62 @@ class Game {
         
         if (!this.draggedUnit) return;
         
-        // Move unit to bench
+                // Move unit to bench
         this.removeUnitFromAllLocations(this.draggedUnit);
         this.playerBench[index] = this.draggedUnit;
         
-                 this.checkForCombinableUnits();
+        // Check for combinations whenever bench changes
+        this.checkForCombinableUnits();
+        this.updateUI();
+        this.renderBench();
+        this.renderArena();
+     }
+     
+     sellUnit(unit) {
+         if (!unit || unit.isEnemy) {
+             return false;
+         }
+         
+         // Calculate sell price (half of original cost, minimum 1)
+         const sellPrice = Math.max(1, Math.floor(unit.cost / 2));
+         
+         // Remove unit from all locations
+         this.removeUnitFromAllLocations(unit);
+         
+         // Give gold
+         this.gold += sellPrice;
+         
+         this.addToLog(`Sold ${unit.type} (Tier ${unit.tier}) for ${sellPrice} gold`, 'victory');
          this.updateUI();
          this.renderBench();
          this.renderArena();
-    }
+         
+         return true;
+     }
+     
+     bindShopSellEvents() {
+         const shopSection = document.querySelector('.shop-section');
+         
+         shopSection.addEventListener('dragover', (e) => {
+             e.preventDefault();
+             if (this.draggedUnit && !this.draggedUnit.isEnemy) {
+                 shopSection.classList.add('drag-over-sell');
+             }
+         });
+         
+         shopSection.addEventListener('dragleave', (e) => {
+             shopSection.classList.remove('drag-over-sell');
+         });
+         
+         shopSection.addEventListener('drop', (e) => {
+             e.preventDefault();
+             shopSection.classList.remove('drag-over-sell');
+             
+             if (this.draggedUnit && !this.draggedUnit.isEnemy) {
+                 this.sellUnit(this.draggedUnit);
+             }
+         });
+     }
 }
 
 // Enhanced Unit Class with Movement
